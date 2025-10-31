@@ -116,9 +116,9 @@ def add_report_formulas(sheets_service, spreadsheet_id):
             'fields': 'userEnteredValue'
         }} ,
 
-        # A25: header + top-25 campaigns (A27:F)
+        # A20: header + top-25 campaigns (A22:F)
         {'updateCells': {
-            'range': {'sheetId': report_id, 'startRowIndex': 24, 'startColumnIndex': 0},
+            'range': {'sheetId': report_id, 'startRowIndex': 19, 'startColumnIndex': 0},
             'rows': [
                 {'values': [{'userEnteredValue': {'stringValue': 'Campaign Performance (Revenue, Leads, RPL) — Top 25'}}]},
                 {'values': []},
@@ -135,11 +135,11 @@ def add_report_formulas(sheets_service, spreadsheet_id):
             'fields': 'userEnteredValue'
         }} ,
 
-        # G27: helper column for composite key (Platform | Offer | Country)
+        # G22: helper column for composite key (Platform | Offer | Country)
         {'updateCells': {
-            'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 6},
+            'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 6},
             'rows': [{'values': [{'userEnteredValue': {'formulaValue':
-                '=ARRAYFORMULA(IF(A27:A="","", A27:A & " | " & B27:B & " | " & C27:C))'}}]}],
+                '=ARRAYFORMULA(IF(A22:A="","", A22:A & " | " & B22:B & " | " & C22:C))'}}]}],
             'fields': 'userEnteredValue'
         }}
     ]
@@ -158,13 +158,13 @@ def add_report_formulas(sheets_service, spreadsheet_id):
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.00%'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
         # Campaigns: D currency, E number, F percent
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 3, 'endColumnIndex': 4},
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 3, 'endColumnIndex': 4},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0.00'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 4, 'endColumnIndex': 5},
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 4, 'endColumnIndex': 5},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 5, 'endColumnIndex': 6},
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 5, 'endColumnIndex': 6},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.00%'}}},
                         'fields': 'userEnteredFormat.numberFormat'}}
     ]
@@ -233,14 +233,14 @@ def add_charts(sheets_service, spreadsheet_id):
                         'chartType': 'BAR',
                         'legendPosition': 'BOTTOM_LEGEND',
                         'domains': [{'domain': {'sourceRange': {'sources': [{
-                            'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
+                            'sheetId': report_id, 'startRowIndex': 21, 'endRowIndex': 2000,
                             'startColumnIndex': 6, 'endColumnIndex': 7}]}}}],
                         'series': [
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
+                                'sheetId': report_id, 'startRowIndex': 21, 'endRowIndex': 2000,
                                 'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
+                                'sheetId': report_id, 'startRowIndex': 21, 'endRowIndex': 2000,
                                 'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'type': 'LINE'}
                         ],
                         'headerCount': 1
