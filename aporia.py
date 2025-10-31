@@ -26,6 +26,9 @@ TARGET_SHEET_NAME = os.getenv('TARGET_SHEET_NAME')
 TAB_MEDIA = os.getenv('TAB_MEDIA')
 TAB_CAMPAIGN = os.getenv('TAB_CAMPAIGN')
 TAB_REPORT = os.getenv('TAB_REPORT')
+# Separate report tabs (defaults provided)
+TAB_REPORT_BUYER = os.getenv('TAB_REPORT_BUYER') or 'Report_MediaBuyerSummary'
+TAB_REPORT_CAMP = os.getenv('TAB_REPORT_CAMP') or 'Report_CampaignPerformance'
 
 def get_credentials():
     """Get credentials from gcloud"""
@@ -90,15 +93,16 @@ def upload_dataframe(sheets_service, spreadsheet_id, sheet_name, df):
         body={'values': values}
     ).execute()
 
-def add_report_formulas(sheets_service, spreadsheet_id):
-    """Report without autoFill: ROI and RPL computed inside QUERY, with labels and top-N."""
+def add_report_formulas(sheets_service, spreadsheet_id, top_n: int = 25):
+    """Create separate report sheets for buyers and campaigns."""
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT)
+    buyer_sheet_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT_BUYER)
+    camp_sheet_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT_CAMP)
 
     reqs = [
-        # A1: header + buyer summary (A3:D)
+        # Buyer summary at A3
         {'updateCells': {
-            'range': {'sheetId': report_id, 'startRowIndex': 0, 'startColumnIndex': 0},
+            'range': {'sheetId': buyer_sheet_id, 'startRowIndex': 0, 'startColumnIndex': 0},
             'rows': [
                 {'values': [{'userEnteredValue': {'stringValue': 'Media Buyer Summary (Revenue, Spend, ROI)'}}]},
                 {'values': []},
@@ -114,57 +118,53 @@ def add_report_formulas(sheets_service, spreadsheet_id):
                     '(sum(Col4)-sum(Col5))/sum(Col5) \'ROI\'", 0)'}}]}
             ],
             'fields': 'userEnteredValue'
-        }} ,
+        }},
 
-        # A20: header + top-25 campaigns (A22:F)
+        # Campaigns top-N at A3 + composite key in G3
         {'updateCells': {
-            'range': {'sheetId': report_id, 'startRowIndex': 19, 'startColumnIndex': 0},
+            'range': {'sheetId': camp_sheet_id, 'startRowIndex': 0, 'startColumnIndex': 0},
             'rows': [
-                {'values': [{'userEnteredValue': {'stringValue': 'Campaign Performance (Revenue, Leads, RPL) — Top 25'}}]},
+                {'values': [{'userEnteredValue': {'stringValue': f'Campaign Performance (Revenue, Leads, RPL) — Top {top_n}'}}]},
                 {'values': []},
                 {'values': [{'userEnteredValue': {'formulaValue':
                     f'=QUERY({TAB_CAMPAIGN}!A2:H, '
-                    '"select Col1, Col2, Col3, sum(Col5), sum(Col6), sum(Col5)/sum(Col6) '
+                    '"select Col1, Col2, Col3, sum(Col5), sum(Col6), '
+                    'sum(Col5)/sum(Col6) '
                     'where Col1 is not null '
                     'group by Col1, Col2, Col3 '
-                    'order by sum(Col5) desc limit 25 '
+                    f'order by sum(Col5) desc limit {top_n} '
                     'label sum(Col5) \'Total Revenue\', '
                     'sum(Col6) \'Total Leads\', '
                     'sum(Col5)/sum(Col6) \'RPL\'", 0)'}}]}
             ],
             'fields': 'userEnteredValue'
-        }} ,
-
-        # G22: helper column for composite key (Platform | Offer | Country)
+        }},
         {'updateCells': {
-            'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 6},
+            'range': {'sheetId': camp_sheet_id, 'startRowIndex': 2, 'startColumnIndex': 6},
             'rows': [{'values': [{'userEnteredValue': {'formulaValue':
-                '=ARRAYFORMULA(IF(A22:A="","", A22:A & " | " & B22:B & " | " & C22:C))'}}]}],
+                '=ARRAYFORMULA(IF(A3:A="","", A3:A & " | " & B3:B & " | " & C3:C))'}}]}],
             'fields': 'userEnteredValue'
         }}
     ]
-
     sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id, body={'requests': reqs}
     ).execute()
 
-    # Number formatting: currency and percents
+    # Formatting
     fmt = [
-        # Buyer summary: B:C currency, D percent
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 1, 'endColumnIndex': 3},
+        {'repeatCell': {'range': {'sheetId': buyer_sheet_id, 'startRowIndex': 2, 'startColumnIndex': 1, 'endColumnIndex': 3},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0.00'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 3, 'endColumnIndex': 4},
+        {'repeatCell': {'range': {'sheetId': buyer_sheet_id, 'startRowIndex': 2, 'startColumnIndex': 3, 'endColumnIndex': 4},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.00%'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
-        # Campaigns: D currency, E number, F percent
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 3, 'endColumnIndex': 4},
+        {'repeatCell': {'range': {'sheetId': camp_sheet_id, 'startRowIndex': 2, 'startColumnIndex': 3, 'endColumnIndex': 4},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0.00'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 4, 'endColumnIndex': 5},
+        {'repeatCell': {'range': {'sheetId': camp_sheet_id, 'startRowIndex': 2, 'startColumnIndex': 4, 'endColumnIndex': 5},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'}}},
                         'fields': 'userEnteredFormat.numberFormat'}},
-        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 21, 'startColumnIndex': 5, 'endColumnIndex': 6},
+        {'repeatCell': {'range': {'sheetId': camp_sheet_id, 'startRowIndex': 2, 'startColumnIndex': 5, 'endColumnIndex': 6},
                         'cell': {'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.00%'}}},
                         'fields': 'userEnteredFormat.numberFormat'}}
     ]
@@ -172,10 +172,11 @@ def add_report_formulas(sheets_service, spreadsheet_id):
         spreadsheetId=spreadsheet_id, body={'requests': fmt}
     ).execute()
 
-def add_charts(sheets_service, spreadsheet_id):
-    """Charts on separate sheets; composite key for campaign axis."""
+def add_charts(sheets_service, spreadsheet_id, buyers_count: int, top_n: int = 25):
+    """Charts on separate sheets; tight ranges matched to data blocks."""
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT)
+    buyer_sheet_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT_BUYER)
+    camp_sheet_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT_CAMP)
 
     def ensure_sheet(title: str) -> int:
         for s in meta['sheets']:
@@ -190,6 +191,12 @@ def add_charts(sheets_service, spreadsheet_id):
     chart_buyer_id = ensure_sheet('Chart_Buyer')
     chart_camp_id = ensure_sheet('Chart_Campaign')
 
+    # Compute tight ranges (A3 headers)
+    buyer_start = 2
+    buyer_end = buyer_start + 1 + max(buyers_count or 0, 0)
+    camp_start = 2
+    camp_end = camp_start + 1 + max(top_n or 0, 0)
+
     # Buyer combo chart: Revenue/Spend bars + ROI line on right axis
     sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
@@ -201,17 +208,17 @@ def add_charts(sheets_service, spreadsheet_id):
                         'chartType': 'COMBO',
                         'legendPosition': 'BOTTOM_LEGEND',
                         'domains': [{'domain': {'sourceRange': {'sources': [{
-                            'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
+                            'sheetId': buyer_sheet_id, 'startRowIndex': buyer_start, 'endRowIndex': buyer_end,
                             'startColumnIndex': 0, 'endColumnIndex': 1}]}}}],
                         'series': [
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
-                                'startColumnIndex': 1, 'endColumnIndex': 2}]}}, 'targetAxis': 'LEFT_AXIS', 'type': 'COLUMN'},
+                                'sheetId': buyer_sheet_id, 'startRowIndex': buyer_start, 'endRowIndex': buyer_end,
+                                'startColumnIndex': 1, 'endColumnIndex': 2}]}}, 'type': 'COLUMN'},
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
-                                'startColumnIndex': 2, 'endColumnIndex': 3}]}}, 'targetAxis': 'LEFT_AXIS', 'type': 'COLUMN'},
+                                'sheetId': buyer_sheet_id, 'startRowIndex': buyer_start, 'endRowIndex': buyer_end,
+                                'startColumnIndex': 2, 'endColumnIndex': 3}]}}, 'type': 'COLUMN'},
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
+                                'sheetId': buyer_sheet_id, 'startRowIndex': buyer_start, 'endRowIndex': buyer_end,
                                 'startColumnIndex': 3, 'endColumnIndex': 4}]}}, 'targetAxis': 'RIGHT_AXIS', 'type': 'LINE'}
                         ],
                         'headerCount': 1
@@ -233,14 +240,14 @@ def add_charts(sheets_service, spreadsheet_id):
                         'chartType': 'BAR',
                         'legendPosition': 'BOTTOM_LEGEND',
                         'domains': [{'domain': {'sourceRange': {'sources': [{
-                            'sheetId': report_id, 'startRowIndex': 21, 'endRowIndex': 2000,
+                            'sheetId': camp_sheet_id, 'startRowIndex': camp_start, 'endRowIndex': camp_end,
                             'startColumnIndex': 6, 'endColumnIndex': 7}]}}}],
                         'series': [
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 21, 'endRowIndex': 2000,
+                                'sheetId': camp_sheet_id, 'startRowIndex': camp_start, 'endRowIndex': camp_end,
                                 'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
                             {'series': {'sourceRange': {'sources': [{
-                                'sheetId': report_id, 'startRowIndex': 21, 'endRowIndex': 2000,
+                                'sheetId': camp_sheet_id, 'startRowIndex': camp_start, 'endRowIndex': camp_end,
                                 'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'type': 'LINE'}
                         ],
                         'headerCount': 1
@@ -303,14 +310,14 @@ def main():
     print(f"Source: https://docs.google.com/spreadsheets/d/{source_id}")
     
     print("[4] Setting up tabs...")
-    setup_tabs(sheets_service, source_id, [TAB_MEDIA, TAB_CAMPAIGN, TAB_REPORT])
+    setup_tabs(sheets_service, source_id, [TAB_MEDIA, TAB_CAMPAIGN, TAB_REPORT_BUYER, TAB_REPORT_CAMP])
     
     print("[5] Uploading data...")
     upload_dataframe(sheets_service, source_id, TAB_MEDIA, df_media)
     upload_dataframe(sheets_service, source_id, TAB_CAMPAIGN, df_campaign)
     
     print("[6] Adding reports...")
-    add_report_formulas(sheets_service, source_id)
+    add_report_formulas(sheets_service, source_id, top_n=25)
     
     print("[7] Creating target sheet...")
     target_id = create_sheet(drive_service, TARGET_SHEET_NAME, force=args.force)
@@ -319,10 +326,11 @@ def main():
     print("[8] Copying data...")
     copy_sheet(sheets_service, source_id, TAB_MEDIA, target_id)
     copy_sheet(sheets_service, source_id, TAB_CAMPAIGN, target_id)
-    copy_sheet(sheets_service, source_id, TAB_REPORT, target_id)
+    copy_sheet(sheets_service, source_id, TAB_REPORT_BUYER, target_id)
+    copy_sheet(sheets_service, source_id, TAB_REPORT_CAMP, target_id)
     
     print("[9] Creating charts in Target...")
-    add_charts(sheets_service, target_id)
+    add_charts(sheets_service, target_id, buyers_count=df_media['Media Buyer'].nunique(), top_n=25)
     
     print("\n✅ Done!")
     print(f"Source: https://docs.google.com/spreadsheets/d/{source_id}")
