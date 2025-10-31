@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 """Aporia Test - Python automation solution"""
 
+import os
 import json
+import argparse
 import requests
 import pandas as pd
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import subprocess
+from dotenv import load_dotenv
 
-# Config
-PROJECT_ID = "teaminternet"
-FOLDER_ID = "17Qa_v6D65-_HANHbRnAyYf82JxYhsQde"
-JSONBIN_KEY = "$2a$10$3phmKfEbSPxJweZDflZKfusaZaJNM4P4p2OSbutkeNAaZY5rnR4zO"
-BIN_CAMPAIGN = "68ef72c243b1c97be9692f8c"
-BIN_MEDIA = "68ef7055ae596e708f14e54f"
+# Load environment variables
+load_dotenv()
+
+# Config from .env
+PROJECT_ID = os.getenv('PROJECT_ID')
+FOLDER_ID = os.getenv('FOLDER_ID')
+JSONBIN_KEY = os.getenv('JSONBIN_KEY')
+BIN_CAMPAIGN = os.getenv('BIN_CAMPAIGN')
+BIN_MEDIA = os.getenv('BIN_MEDIA')
+SOURCE_SHEET_NAME = os.getenv('SOURCE_SHEET_NAME')
+TARGET_SHEET_NAME = os.getenv('TARGET_SHEET_NAME')
+TAB_MEDIA = os.getenv('TAB_MEDIA')
+TAB_CAMPAIGN = os.getenv('TAB_CAMPAIGN')
+TAB_REPORT = os.getenv('TAB_REPORT')
 
 def get_credentials():
     """Get credentials from gcloud"""
@@ -29,14 +40,31 @@ def fetch_jsonbin(bin_id):
     resp.raise_for_status()
     return resp.json()
 
-def create_sheet(service, name):
-    """Create spreadsheet in folder"""
+def find_existing_file(drive_service, name, folder_id):
+    """Find existing file by name in folder"""
+    query = f"name='{name}' and '{folder_id}' in parents and trashed=false"
+    results = drive_service.files().list(q=query, fields='files(id, name)').execute()
+    files = results.get('files', [])
+    return files[0]['id'] if files else None
+
+def delete_file(drive_service, file_id):
+    """Delete file by ID"""
+    drive_service.files().delete(fileId=file_id).execute()
+
+def create_sheet(drive_service, name, force=False):
+    """Create spreadsheet in folder, optionally replacing existing"""
+    if force:
+        existing_id = find_existing_file(drive_service, name, FOLDER_ID)
+        if existing_id:
+            print(f"  Deleting existing '{name}'...")
+            delete_file(drive_service, existing_id)
+    
     body = {
         'name': name,
         'mimeType': 'application/vnd.google-apps.spreadsheet',
         'parents': [FOLDER_ID]
     }
-    file = service.files().create(body=body, fields='id').execute()
+    file = drive_service.files().create(body=body, fields='id').execute()
     return file['id']
 
 def setup_tabs(sheets_service, spreadsheet_id, tab_names):
@@ -62,97 +90,57 @@ def upload_dataframe(sheets_service, spreadsheet_id, sheet_name, df):
         body={'values': values}
     ).execute()
 
-def add_report_formulas(sheets_service, spreadsheet_id, buyers_count: int):
+def add_report_formulas(sheets_service, spreadsheet_id):
     """Add QUERY formulas to Report tab"""
     # Get sheet IDs
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == 'Report')
+    report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT)
     
-    # 1) Header and Media Buyer Summary at top
+    requests = [{
+        'updateCells': {
+            'range': {'sheetId': report_id, 'startRowIndex': 0, 'startColumnIndex': 0},
+            'rows': [
+                {'values': [{'userEnteredValue': {'stringValue': 'Media Buyer Summary (Revenue, Spend, ROI)'}}]},
+                {'values': []},
+                {'values': [{'userEnteredValue': {'formulaValue': 
+                    f'=QUERY({TAB_MEDIA}!A2:E, "select Col1, sum(Col4), sum(Col5) group by Col1 order by sum(Col4) desc")'
+                }}]},
+                {'values': []},
+                {'values': []},
+                {'values': []},
+                {'values': []},
+                {'values': [{'userEnteredValue': {'stringValue': 'Campaign Performance (Revenue, Leads, RPL)'}}]},
+                {'values': []},
+                {'values': [{'userEnteredValue': {'formulaValue':
+                    f'=QUERY({TAB_CAMPAIGN}!A2:H, "select Col1, Col2, Col3, sum(Col5), sum(Col6), sum(Col5)/sum(Col6) group by Col1, Col2, Col3 order by sum(Col5) desc")'
+                }}]}
+            ],
+            'fields': 'userEnteredValue'
+        }
+    }, {
+        'updateCells': {
+            'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 3},
+            'rows': [
+                {'values': [{'userEnteredValue': {'stringValue': 'ROI'}}]},
+                {'values': [{'userEnteredValue': {'formulaValue': '=(B4-C4)/C4'}}]}
+            ],
+            'fields': 'userEnteredValue'
+        }
+    }]
+    
     sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
-        body={'requests': [{
-            'updateCells': {
-                'range': {'sheetId': report_id, 'startRowIndex': 0, 'startColumnIndex': 0},
-                'rows': [
-                    {'values': [{'userEnteredValue': {'stringValue': 'Media Buyer Summary (Revenue, Spend, ROI)'}}]},
-                    {'values': []},
-                    {'values': [{'userEnteredValue': {'formulaValue':
-                        '=QUERY(Raw_MediaBuyer!A2:E, "select Col1, sum(Col4), sum(Col5) group by Col1 order by sum(Col4) desc", 0)'
-                    }}]}
-                ],
-                'fields': 'userEnteredValue'
-            }
-        }]}
+        body={'requests': requests}
     ).execute()
     
-    # 2) ROI header + first formula (will be auto-filled below)
+    # Copy ROI formula down
     sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={'requests': [{
-            'updateCells': {
-                'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 3},
-                'rows': [
-                    {'values': [{'userEnteredValue': {'stringValue': 'ROI'}}]},
-                    {'values': [{'userEnteredValue': {'formulaValue': '=IFERROR((B4-C4)/C4,)'}}]}
-                ],
-                'fields': 'userEnteredValue'
-            }
-        }]}
-    ).execute()
-    
-    # 3) Campaign Performance block far below to avoid spill collision
-    sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={'requests': [{
-            'updateCells': {
-                'range': {'sheetId': report_id, 'startRowIndex': 24, 'startColumnIndex': 0},  # Row 25
-                'rows': [
-                    {'values': [{'userEnteredValue': {'stringValue': 'Campaign Performance (Revenue, Leads, RPL)'}}]},
-                    {'values': []},
-                    {'values': [{'userEnteredValue': {'formulaValue':
-                        '=QUERY(Raw_Campaign!A2:H, "select Col1, Col2, Col3, sum(Col5), sum(Col6), sum(Col5)/sum(Col6) group by Col1, Col2, Col3 order by sum(Col5) desc", 0)'
-                    }}]}
-                ],
-                'fields': 'userEnteredValue'
-            }
-        }]}
-    ).execute()
-
-    # 4) Copy ROI formula down exactly to match buyers_count
-    if buyers_count and buyers_count > 1:
-        dest_end = 3 + buyers_count  # zero-based exclusive end (row 4..row 3+count)
-        sheets_service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={'requests': [{
-                'copyPaste': {
-                    'source': {
-                        'sheetId': report_id,
-                        'startRowIndex': 3, 'endRowIndex': 4, 'startColumnIndex': 3, 'endColumnIndex': 4
-                    },
-                    'destination': {
-                        'sheetId': report_id,
-                        'startRowIndex': 4, 'endRowIndex': dest_end, 'startColumnIndex': 3, 'endColumnIndex': 4
-                    },
-                    'pasteType': 'PASTE_FORMULA'
-                }
-            }]}
-        ).execute()
-    
-    # AutoFill ROI formula down a generous range; IFERROR prevents noise on empty rows
-    sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={'requests': [{
-            'autoFill': {
-                'useAlternateSeries': False,
-                'sourceAndDestination': {
-                    'source': {
-                        'sheetId': report_id,
-                        'startRowIndex': 3, 'endRowIndex': 4, 'startColumnIndex': 3, 'endColumnIndex': 4
-                    },
-                    'dimension': 'COLUMNS',
-                    'fillLength': 200
-                }
+            'copyPaste': {
+                'source': {'sheetId': report_id, 'startRowIndex': 3, 'endRowIndex': 4, 'startColumnIndex': 3, 'endColumnIndex': 4},
+                'destination': {'sheetId': report_id, 'startRowIndex': 4, 'endRowIndex': 10, 'startColumnIndex': 3, 'endColumnIndex': 4},
+                'pasteType': 'PASTE_FORMULA'
             }
         }]}
     ).execute()
@@ -160,7 +148,7 @@ def add_report_formulas(sheets_service, spreadsheet_id, buyers_count: int):
 def add_charts(sheets_service, spreadsheet_id):
     """Add charts to Report tab"""
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == 'Report')
+    report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT)
     
     requests = [
         {
@@ -192,11 +180,11 @@ def add_charts(sheets_service, spreadsheet_id):
                         'basicChart': {
                             'chartType': 'COLUMN',
                             'legendPosition': 'BOTTOM_LEGEND',
-                            'domains': [{'domain': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 6, 'startColumnIndex': 0, 'endColumnIndex': 1}]}}}],
+                            'domains': [{'domain': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 0, 'endColumnIndex': 1}]}}}],
                             'series': [
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 6, 'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 6, 'startColumnIndex': 4, 'endColumnIndex': 5}]}}},
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 6, 'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'targetAxis': 'RIGHT_AXIS'}
+                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
+                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 4, 'endColumnIndex': 5}]}}},
+                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'targetAxis': 'RIGHT_AXIS'}
                             ],
                             'headerCount': 1
                         }
@@ -230,6 +218,10 @@ def copy_sheet(sheets_service, source_id, sheet_name, target_id):
     ).execute()
 
 def main():
+    parser = argparse.ArgumentParser(description='Aporia Test Automation')
+    parser.add_argument('--force', action='store_true', help='Overwrite existing sheets with same names')
+    args = parser.parse_args()
+    
     print("[1] Fetching data from JSONBin...")
     campaign_data = fetch_jsonbin(BIN_CAMPAIGN)
     media_data = fetch_jsonbin(BIN_MEDIA)
@@ -256,28 +248,28 @@ def main():
     drive_service = build('drive', 'v3', credentials=creds)
     sheets_service = build('sheets', 'v4', credentials=creds)
     
-    source_id = create_sheet(drive_service, "Aporia Test")
+    source_id = create_sheet(drive_service, SOURCE_SHEET_NAME, force=args.force)
     print(f"Source: https://docs.google.com/spreadsheets/d/{source_id}")
     
     print("[4] Setting up tabs...")
-    setup_tabs(sheets_service, source_id, ['Raw_MediaBuyer', 'Raw_Campaign', 'Report'])
+    setup_tabs(sheets_service, source_id, [TAB_MEDIA, TAB_CAMPAIGN, TAB_REPORT])
     
     print("[5] Uploading data...")
-    upload_dataframe(sheets_service, source_id, 'Raw_MediaBuyer', df_media)
-    upload_dataframe(sheets_service, source_id, 'Raw_Campaign', df_campaign)
+    upload_dataframe(sheets_service, source_id, TAB_MEDIA, df_media)
+    upload_dataframe(sheets_service, source_id, TAB_CAMPAIGN, df_campaign)
     
     print("[6] Adding reports...")
-    add_report_formulas(sheets_service, source_id, df_media['Media Buyer'].nunique())
+    add_report_formulas(sheets_service, source_id)
     add_charts(sheets_service, source_id)
     
     print("[7] Creating target sheet...")
-    target_id = create_sheet(drive_service, "Aporia Target")
+    target_id = create_sheet(drive_service, TARGET_SHEET_NAME, force=args.force)
     print(f"Target: https://docs.google.com/spreadsheets/d/{target_id}")
     
     print("[8] Copying data...")
-    copy_sheet(sheets_service, source_id, 'Raw_MediaBuyer', target_id)
-    copy_sheet(sheets_service, source_id, 'Raw_Campaign', target_id)
-    copy_sheet(sheets_service, source_id, 'Report', target_id)
+    copy_sheet(sheets_service, source_id, TAB_MEDIA, target_id)
+    copy_sheet(sheets_service, source_id, TAB_CAMPAIGN, target_id)
+    copy_sheet(sheets_service, source_id, TAB_REPORT, target_id)
     
     print("\n✅ Done!")
     print(f"Source: https://docs.google.com/spreadsheets/d/{source_id}")
