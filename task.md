@@ -1,5 +1,3 @@
-# Team Internet - Aporia Test
-
 ## Introduction
 
 You will extract data from an HTTP API, save it as CSV files, then upload those CSVs to Google Sheets and complete two follow-up tasks ("Data Transfer" and "Report Generation").
