@@ -62,7 +62,7 @@ def upload_dataframe(sheets_service, spreadsheet_id, sheet_name, df):
         body={'values': values}
     ).execute()
 
-def add_report_formulas(sheets_service, spreadsheet_id):
+def add_report_formulas(sheets_service, spreadsheet_id, buyers_count: int):
     """Add QUERY formulas to Report tab"""
     # Get sheet IDs
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
@@ -118,6 +118,26 @@ def add_report_formulas(sheets_service, spreadsheet_id):
             }
         }]}
     ).execute()
+
+    # 4) Copy ROI formula down exactly to match buyers_count
+    if buyers_count and buyers_count > 1:
+        dest_end = 3 + buyers_count  # zero-based exclusive end (row 4..row 3+count)
+        sheets_service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': [{
+                'copyPaste': {
+                    'source': {
+                        'sheetId': report_id,
+                        'startRowIndex': 3, 'endRowIndex': 4, 'startColumnIndex': 3, 'endColumnIndex': 4
+                    },
+                    'destination': {
+                        'sheetId': report_id,
+                        'startRowIndex': 4, 'endRowIndex': dest_end, 'startColumnIndex': 3, 'endColumnIndex': 4
+                    },
+                    'pasteType': 'PASTE_FORMULA'
+                }
+            }]}
+        ).execute()
     
     # AutoFill ROI formula down a generous range; IFERROR prevents noise on empty rows
     sheets_service.spreadsheets().batchUpdate(
@@ -247,7 +267,7 @@ def main():
     upload_dataframe(sheets_service, source_id, 'Raw_Campaign', df_campaign)
     
     print("[6] Adding reports...")
-    add_report_formulas(sheets_service, source_id)
+    add_report_formulas(sheets_service, source_id, df_media['Media Buyer'].nunique())
     add_charts(sheets_service, source_id)
     
     print("[7] Creating target sheet...")
