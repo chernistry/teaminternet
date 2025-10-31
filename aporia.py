@@ -311,7 +311,6 @@ def main():
     
     print("[6] Adding reports...")
     add_report_formulas(sheets_service, source_id)
-    add_charts(sheets_service, source_id)
     
     print("[7] Creating target sheet...")
     target_id = create_sheet(drive_service, TARGET_SHEET_NAME, force=args.force)
@@ -321,6 +320,9 @@ def main():
     copy_sheet(sheets_service, source_id, TAB_MEDIA, target_id)
     copy_sheet(sheets_service, source_id, TAB_CAMPAIGN, target_id)
     copy_sheet(sheets_service, source_id, TAB_REPORT, target_id)
+    
+    print("[9] Creating charts in Target...")
+    add_charts(sheets_service, target_id)
     
     print("\n✅ Done!")
     print(f"Source: https://docs.google.com/spreadsheets/d/{source_id}")
