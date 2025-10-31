@@ -91,113 +91,164 @@ def upload_dataframe(sheets_service, spreadsheet_id, sheet_name, df):
     ).execute()
 
 def add_report_formulas(sheets_service, spreadsheet_id):
-    """Add QUERY formulas to Report tab"""
-    # Get sheet IDs
+    """Report without autoFill: ROI and RPL computed inside QUERY, with labels and top-N."""
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT)
-    
-    requests = [{
-        'updateCells': {
+
+    reqs = [
+        # A1: header + buyer summary (A3:D)
+        {'updateCells': {
             'range': {'sheetId': report_id, 'startRowIndex': 0, 'startColumnIndex': 0},
             'rows': [
                 {'values': [{'userEnteredValue': {'stringValue': 'Media Buyer Summary (Revenue, Spend, ROI)'}}]},
                 {'values': []},
-                {'values': [{'userEnteredValue': {'formulaValue': 
-                    f'=QUERY({TAB_MEDIA}!A2:E, "select Col1, sum(Col4), sum(Col5) group by Col1 order by sum(Col4) desc")'
-                }}]},
-                {'values': []},
-                {'values': []},
-                {'values': []},
-                {'values': []},
-                {'values': [{'userEnteredValue': {'stringValue': 'Campaign Performance (Revenue, Leads, RPL)'}}]},
+                {'values': [{'userEnteredValue': {'formulaValue':
+                    f'=QUERY({TAB_MEDIA}!A2:E, '
+                    '"select Col1, sum(Col4), sum(Col5), '
+                    '(sum(Col4)-sum(Col5))/sum(Col5) '
+                    'where Col1 is not null '
+                    'group by Col1 '
+                    'label sum(Col4) \'Total Revenue\', '
+                    'sum(Col5) \'Total Spend\', '
+                    '(sum(Col4)-sum(Col5))/sum(Col5) \'ROI\' '
+                    'order by (sum(Col4)-sum(Col5))/sum(Col5) desc", 0)'}}]}
+            ],
+            'fields': 'userEnteredValue'
+        }} ,
+
+        # A25: header + top-25 campaigns (A27:F)
+        {'updateCells': {
+            'range': {'sheetId': report_id, 'startRowIndex': 24, 'startColumnIndex': 0},
+            'rows': [
+                {'values': [{'userEnteredValue': {'stringValue': 'Campaign Performance (Revenue, Leads, RPL) — Top 25'}}]},
                 {'values': []},
                 {'values': [{'userEnteredValue': {'formulaValue':
-                    f'=QUERY({TAB_CAMPAIGN}!A2:H, "select Col1, Col2, Col3, sum(Col5), sum(Col6), sum(Col5)/sum(Col6) group by Col1, Col2, Col3 order by sum(Col5) desc")'
-                }}]}
+                    f'=QUERY({TAB_CAMPAIGN}!A2:H, '
+                    '"select Col1, Col2, Col3, sum(Col5), sum(Col6), sum(Col5)/sum(Col6) '
+                    'where Col1 is not null '
+                    'group by Col1, Col2, Col3 '
+                    'label sum(Col5) \'Total Revenue\', '
+                    'sum(Col6) \'Total Leads\', '
+                    'sum(Col5)/sum(Col6) \'RPL\' '
+                    'order by sum(Col5) desc limit 25", 0)'}}]}
             ],
             'fields': 'userEnteredValue'
-        }
-    }, {
-        'updateCells': {
-            'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 3},
-            'rows': [
-                {'values': [{'userEnteredValue': {'stringValue': 'ROI'}}]},
-                {'values': [{'userEnteredValue': {'formulaValue': '=(B4-C4)/C4'}}]}
-            ],
+        }} ,
+
+        # G27: helper column for composite key (Platform | Offer | Country)
+        {'updateCells': {
+            'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 6},
+            'rows': [{'values': [{'userEnteredValue': {'formulaValue':
+                '=ARRAYFORMULA(IF(A27:A="","", A27:A & " | " & B27:B & " | " & C27:C))'}}]}],
             'fields': 'userEnteredValue'
-        }
-    }]
-    
+        }}
+    ]
+
     sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={'requests': requests}
+        spreadsheetId=spreadsheet_id, body={'requests': reqs}
     ).execute()
-    
-    # Copy ROI formula down
+
+    # Number formatting: currency and percents
+    fmt = [
+        # Buyer summary: B:C currency, D percent
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 1, 'endColumnIndex': 3},
+                        'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0.00'}}},
+                        'fields': 'userEnteredFormat.numberFormat'}},
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 3, 'endColumnIndex': 4},
+                        'cell': {'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.00%'}}},
+                        'fields': 'userEnteredFormat.numberFormat'}},
+        # Campaigns: D currency, E number, F percent
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 3, 'endColumnIndex': 4},
+                        'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0.00'}}},
+                        'fields': 'userEnteredFormat.numberFormat'}},
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 4, 'endColumnIndex': 5},
+                        'cell': {'userEnteredFormat': {'numberFormat': {'type': 'NUMBER', 'pattern': '#,##0'}}},
+                        'fields': 'userEnteredFormat.numberFormat'}},
+        {'repeatCell': {'range': {'sheetId': report_id, 'startRowIndex': 26, 'startColumnIndex': 5, 'endColumnIndex': 6},
+                        'cell': {'userEnteredFormat': {'numberFormat': {'type': 'PERCENT', 'pattern': '0.00%'}}},
+                        'fields': 'userEnteredFormat.numberFormat'}}
+    ]
     sheets_service.spreadsheets().batchUpdate(
-        spreadsheetId=spreadsheet_id,
-        body={'requests': [{
-            'copyPaste': {
-                'source': {'sheetId': report_id, 'startRowIndex': 3, 'endRowIndex': 4, 'startColumnIndex': 3, 'endColumnIndex': 4},
-                'destination': {'sheetId': report_id, 'startRowIndex': 4, 'endRowIndex': 10, 'startColumnIndex': 3, 'endColumnIndex': 4},
-                'pasteType': 'PASTE_FORMULA'
-            }
-        }]}
+        spreadsheetId=spreadsheet_id, body={'requests': fmt}
     ).execute()
 
 def add_charts(sheets_service, spreadsheet_id):
-    """Add charts to Report tab"""
+    """Charts on separate sheets; composite key for campaign axis."""
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     report_id = next(s['properties']['sheetId'] for s in meta['sheets'] if s['properties']['title'] == TAB_REPORT)
-    
-    requests = [
-        {
-            'addChart': {
-                'chart': {
-                    'spec': {
-                        'title': 'Revenue vs Spend by Media Buyer',
-                        'basicChart': {
-                            'chartType': 'COLUMN',
-                            'legendPosition': 'BOTTOM_LEGEND',
-                            'domains': [{'domain': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 0, 'endColumnIndex': 1}]}}}],
-                            'series': [
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 1, 'endColumnIndex': 2}]}}},
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 2, 'endColumnIndex': 3}]}}},
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 2, 'startColumnIndex': 3, 'endColumnIndex': 4}]}}, 'targetAxis': 'RIGHT_AXIS'}
-                            ],
-                            'headerCount': 1
-                        }
-                    },
-                    'position': {'overlayPosition': {'anchorCell': {'sheetId': report_id, 'rowIndex': 0, 'columnIndex': 7}}}
-                }
-            }
-        },
-        {
-            'addChart': {
-                'chart': {
-                    'spec': {
-                        'title': 'Top Platforms/Offers by Revenue',
-                        'basicChart': {
-                            'chartType': 'COLUMN',
-                            'legendPosition': 'BOTTOM_LEGEND',
-                            'domains': [{'domain': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 0, 'endColumnIndex': 1}]}}}],
-                            'series': [
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 4, 'endColumnIndex': 5}]}}},
-                                {'series': {'sourceRange': {'sources': [{'sheetId': report_id, 'startRowIndex': 9, 'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'targetAxis': 'RIGHT_AXIS'}
-                            ],
-                            'headerCount': 1
-                        }
-                    },
-                    'position': {'overlayPosition': {'anchorCell': {'sheetId': report_id, 'rowIndex': 18, 'columnIndex': 7}}}
-                }
-            }
-        }
-    ]
-    
+
+    def ensure_sheet(title: str) -> int:
+        for s in meta['sheets']:
+            if s['properties']['title'] == title:
+                return s['properties']['sheetId']
+        r = sheets_service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={'requests': [{'addSheet': {'properties': {'title': title}}}]}
+        ).execute()
+        return r['replies'][0]['addSheet']['properties']['sheetId']
+
+    chart_buyer_id = ensure_sheet('Chart_Buyer')
+    chart_camp_id = ensure_sheet('Chart_Campaign')
+
+    # Buyer combo chart: Revenue/Spend bars + ROI line on right axis
     sheets_service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
-        body={'requests': requests}
+        body={'requests': [{
+            'addChart': {'chart': {
+                'spec': {
+                    'title': 'Revenue & Spend with ROI by Media Buyer',
+                    'basicChart': {
+                        'chartType': 'COMBO',
+                        'legendPosition': 'BOTTOM_LEGEND',
+                        'domains': [{'domain': {'sourceRange': {'sources': [{
+                            'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
+                            'startColumnIndex': 0, 'endColumnIndex': 1}]}}}],
+                        'series': [
+                            {'series': {'sourceRange': {'sources': [{
+                                'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
+                                'startColumnIndex': 1, 'endColumnIndex': 2}]}}, 'targetAxis': 'LEFT_AXIS', 'type': 'COLUMN'},
+                            {'series': {'sourceRange': {'sources': [{
+                                'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
+                                'startColumnIndex': 2, 'endColumnIndex': 3}]}}, 'targetAxis': 'LEFT_AXIS', 'type': 'COLUMN'},
+                            {'series': {'sourceRange': {'sources': [{
+                                'sheetId': report_id, 'startRowIndex': 2, 'endRowIndex': 1000,
+                                'startColumnIndex': 3, 'endColumnIndex': 4}]}}, 'targetAxis': 'RIGHT_AXIS', 'type': 'LINE'}
+                        ],
+                        'headerCount': 1
+                    }
+                },
+                'position': {'overlayPosition': {'anchorCell': {'sheetId': chart_buyer_id, 'rowIndex': 0, 'columnIndex': 0}}}
+            }}
+        }]}
+    ).execute()
+
+    # Campaign horizontal bar: domain is composite key G; series Revenue (bar) + RPL (line)
+    sheets_service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={'requests': [{
+            'addChart': {'chart': {
+                'spec': {
+                    'title': 'Top Campaigns by Revenue (Platform | Offer | Country)',
+                    'basicChart': {
+                        'chartType': 'BAR',
+                        'legendPosition': 'BOTTOM_LEGEND',
+                        'domains': [{'domain': {'sourceRange': {'sources': [{
+                            'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
+                            'startColumnIndex': 6, 'endColumnIndex': 7}]}}}],
+                        'series': [
+                            {'series': {'sourceRange': {'sources': [{
+                                'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
+                                'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
+                            {'series': {'sourceRange': {'sources': [{
+                                'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
+                                'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'targetAxis': 'RIGHT_AXIS', 'type': 'LINE'}
+                        ],
+                        'headerCount': 1
+                    }
+                },
+                'position': {'overlayPosition': {'anchorCell': {'sheetId': chart_camp_id, 'rowIndex': 0, 'columnIndex': 0}}}
+            }}
+        }]}
     ).execute()
 
 def copy_sheet(sheets_service, source_id, sheet_name, target_id):
