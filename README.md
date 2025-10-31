@@ -4,7 +4,7 @@
 
 Python automation for Aporia test: fetches data from JSONBin API, converts to DataFrames, uploads to Google Sheets with reports and visualizations.
 
-**Stack**: Python + google-api-python-client + pandas + gcloud auth
+**Stack**: Python + google-api-python-client + pandas + gcloud auth + python-dotenv
 
 ## Prerequisites
 
@@ -19,14 +19,20 @@ Python automation for Aporia test: fetches data from JSONBin API, converts to Da
 pip install -r requirements.txt
 ```
 
-2. **Authenticate gcloud**:
+2. **Configure environment**:
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+3. **Authenticate gcloud**:
 ```bash
 gcloud auth login --enable-gdrive-access
 gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets
-gcloud config set project teaminternet
+gcloud config set project YOUR_PROJECT_ID
 ```
 
-3. **Enable APIs**:
+4. **Enable APIs**:
 ```bash
 gcloud services enable sheets.googleapis.com drive.googleapis.com
 ```
@@ -38,24 +44,34 @@ python3 aporia.py
 ```
 
 The script will:
-1. Fetch JSON from JSONBin (2 bins: campaign + media buyer data)
-2. Convert to pandas DataFrames with proper types
-3. Create source Google Sheet in folder `aporia` with 3 tabs:
-   - `Raw_MediaBuyer` - Media buyer campaign data (22 rows)
-   - `Raw_Campaign` - Campaign performance data (100 rows)
+1. Load configuration from `.env` file
+2. Fetch JSON from JSONBin (2 bins: campaign + media buyer data)
+3. Convert to pandas DataFrames with proper types
+4. Create source Google Sheet in configured folder with 3 tabs:
+   - `Raw_MediaBuyer` - Media buyer campaign data
+   - `Raw_Campaign` - Campaign performance data
    - `Report` - Automated analytics with QUERY formulas and charts
-4. Create target Google Sheet
-5. Copy all 3 tabs to target (data transfer requirement)
-6. Output URLs for both sheets
+5. Create target Google Sheet
+6. Copy all 3 tabs to target (data transfer requirement)
+7. Output URLs for both sheets
 
 ## Configuration
 
-Edit variables in `aporia.py`:
+All configuration is now managed via environment variables in `.env` file:
 
-```python
-PROJECT_ID = "teaminternet"
-FOLDER_ID = "17Qa_v6D65-_HANHbRnAyYf82JxYhsQde"  # Drive folder "aporia"
+```bash
+# Copy example and edit with your values
+cp .env.example .env
 ```
+
+Optional variables:
+- `SOURCE_SHEET_NAME` - Name for source spreadsheet (default: "Aporia Test")
+- `TARGET_SHEET_NAME` - Name for target spreadsheet (default: "Aporia Target")
+- `TAB_MEDIA` - Media buyer tab name (default: "Raw_MediaBuyer")
+- `TAB_CAMPAIGN` - Campaign tab name (default: "Raw_Campaign")
+- `TAB_REPORT` - Report tab name (default: "Report")
+
+See `.env.example` for detailed setup instructions and links.
 
 ## Output
 
@@ -102,6 +118,8 @@ FOLDER_ID = "17Qa_v6D65-_HANHbRnAyYf82JxYhsQde"  # Drive folder "aporia"
 ```
 aporia.py           - Main Python script
 requirements.txt    - Python dependencies
+.env.example        - Environment configuration template
+.env                - Your environment configuration (create from example)
 task.md            - Original task description
 README.md          - This file
 ```
