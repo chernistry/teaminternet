@@ -108,10 +108,10 @@ def add_report_formulas(sheets_service, spreadsheet_id):
                     '(sum(Col4)-sum(Col5))/sum(Col5) '
                     'where Col1 is not null '
                     'group by Col1 '
+                    'order by (sum(Col4)-sum(Col5))/sum(Col5) desc '
                     'label sum(Col4) \'Total Revenue\', '
                     'sum(Col5) \'Total Spend\', '
-                    '(sum(Col4)-sum(Col5))/sum(Col5) \'ROI\' '
-                    'order by (sum(Col4)-sum(Col5))/sum(Col5) desc", 0)'}}]}
+                    '(sum(Col4)-sum(Col5))/sum(Col5) \'ROI\'", 0)'}}]}
             ],
             'fields': 'userEnteredValue'
         }} ,
@@ -127,10 +127,10 @@ def add_report_formulas(sheets_service, spreadsheet_id):
                     '"select Col1, Col2, Col3, sum(Col5), sum(Col6), sum(Col5)/sum(Col6) '
                     'where Col1 is not null '
                     'group by Col1, Col2, Col3 '
+                    'order by sum(Col5) desc limit 25 '
                     'label sum(Col5) \'Total Revenue\', '
                     'sum(Col6) \'Total Leads\', '
-                    'sum(Col5)/sum(Col6) \'RPL\' '
-                    'order by sum(Col5) desc limit 25", 0)'}}]}
+                    'sum(Col5)/sum(Col6) \'RPL\'", 0)'}}]}
             ],
             'fields': 'userEnteredValue'
         }} ,
@@ -241,7 +241,7 @@ def add_charts(sheets_service, spreadsheet_id):
                                 'startColumnIndex': 3, 'endColumnIndex': 4}]}}},
                             {'series': {'sourceRange': {'sources': [{
                                 'sheetId': report_id, 'startRowIndex': 26, 'endRowIndex': 2000,
-                                'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'targetAxis': 'RIGHT_AXIS', 'type': 'LINE'}
+                                'startColumnIndex': 5, 'endColumnIndex': 6}]}}, 'type': 'LINE'}
                         ],
                         'headerCount': 1
                     }
